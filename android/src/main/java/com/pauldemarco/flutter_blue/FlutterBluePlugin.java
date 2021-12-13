@@ -310,7 +310,8 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     // If device was connected to previously but is now disconnected, attempt a reconnect
                     BluetoothDeviceCache bluetoothDeviceCache = mDevices.get(deviceId);
                     if(bluetoothDeviceCache != null && !isConnected) {
-                        if(bluetoothDeviceCache.gattOne.connect() && bluetoothDeviceCache.gattTwo.connect()){
+                        if(bluetoothDeviceCache.gattOne.connect()){
+                            new Handler().postDelayed(bluetoothDeviceCache.gattTwo::connect, 2000);
                             result.success(null);
                         } else {
                             result.error("reconnect_error", "error when reconnecting to device", null);
