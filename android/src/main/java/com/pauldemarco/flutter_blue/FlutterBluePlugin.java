@@ -53,7 +53,6 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.EventChannel.EventSink;
-import io.flutter.plugin.common.EventChannel.StreamHandler;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
@@ -311,7 +310,7 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     // If device was connected to previously but is now disconnected, attempt a reconnect
                     BluetoothDeviceCache bluetoothDeviceCache = mDevices.get(deviceId);
                     if(bluetoothDeviceCache != null && !isConnected) {
-                        if(bluetoothDeviceCache.gatt.connect()){
+                        if(bluetoothDeviceCache.gattOne.connect() && bluetoothDeviceCache.gattTwo.connect()){
                             result.success(null);
                         } else {
                             result.error("reconnect_error", "error when reconnecting to device", null);
@@ -320,13 +319,16 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     }
 
                     // New request, connect and add gattServer to Map
-                    BluetoothGatt gattServer;
+                    BluetoothGatt gattServerOne;
+                    BluetoothGatt gattServerTwo;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        gattServer = device.connectGatt(context, options.getAndroidAutoConnect(), mGattCallback, BluetoothDevice.TRANSPORT_LE);
+                        gattServerOne = device.connectGatt(context, options.getAndroidAutoConnect(), mGattCallback, BluetoothDevice.TRANSPORT_LE);
+                        gattServerTwo = device.connectGatt(context, options.getAndroidAutoConnect(), mGattCallback, BluetoothDevice.TRANSPORT_LE);
                     } else {
-                        gattServer = device.connectGatt(context, options.getAndroidAutoConnect(), mGattCallback);
+                        gattServerOne = device.connectGatt(context, options.getAndroidAutoConnect(), mGattCallback);
+                        gattServerTwo = device.connectGatt(context, options.getAndroidAutoConnect(), mGattCallback);
                     }
-                    mDevices.put(deviceId, new BluetoothDeviceCache(gattServer));
+                    mDevices.put(deviceId, new BluetoothDeviceCache(gattServerOne, gattServerTwo));
                     result.success(null);
                 });
             }
@@ -338,10 +340,13 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                 int state = mBluetoothManager.getConnectionState(device, BluetoothProfile.GATT);
                 BluetoothDeviceCache cache = mDevices.remove(deviceId);
                 if(cache != null) {
-                    BluetoothGatt gattServer = cache.gatt;
-                    gattServer.disconnect();
+                    BluetoothGatt firstGattServer = cache.gattOne;
+                    BluetoothGatt secondGattServer = cache.gattTwo;
+                    firstGattServer.disconnect();
+                    secondGattServer.disconnect();
                     if(state == BluetoothProfile.STATE_DISCONNECTED) {
-                        gattServer.close();
+                        firstGattServer.close();
+                        secondGattServer.close();
                     }
                 }
                 result.success(null);
@@ -365,7 +370,9 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
             {
                 String deviceId = (String)call.arguments;
                 try {
-                    BluetoothGatt gatt = locateGatt(deviceId);
+                    BluetoothDeviceCache cache;
+                    cache = locateGattCache(deviceId);
+                    BluetoothGatt gatt = cache.gattOne;
                     if(gatt.discoverServices()) {
                         result.success(null);
                     } else {
@@ -381,7 +388,9 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
             {
                 String deviceId = (String)call.arguments;
                 try {
-                    BluetoothGatt gatt = locateGatt(deviceId);
+                    BluetoothDeviceCache cache;
+                    cache = locateGattCache(deviceId);
+                    BluetoothGatt gatt = cache.gattOne;
                     Protos.DiscoverServicesResult.Builder p = Protos.DiscoverServicesResult.newBuilder();
                     p.setRemoteId(deviceId);
                     for(BluetoothGattService s : gatt.getServices()){
@@ -405,10 +414,12 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     break;
                 }
 
+                BluetoothDeviceCache cache;
                 BluetoothGatt gattServer;
                 BluetoothGattCharacteristic characteristic;
                 try {
-                    gattServer = locateGatt(request.getRemoteId());
+                    cache = locateGattCache(request.getRemoteId());
+                    gattServer = cache.gattOne;
                     characteristic = locateCharacteristic(gattServer, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
                 } catch(Exception e) {
                     result.error("read_characteristic_error", e.getMessage(), null);
@@ -434,11 +445,13 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     break;
                 }
 
+                BluetoothDeviceCache cache;
                 BluetoothGatt gattServer;
                 BluetoothGattCharacteristic characteristic;
                 BluetoothGattDescriptor descriptor;
                 try {
-                    gattServer = locateGatt(request.getRemoteId());
+                    cache = locateGattCache(request.getRemoteId());
+                    gattServer = cache.gattOne;
                     characteristic = locateCharacteristic(gattServer, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
                     descriptor = locateDescriptor(characteristic, request.getDescriptorUuid());
                 } catch(Exception e) {
@@ -465,10 +478,12 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     break;
                 }
 
+                BluetoothDeviceCache cache;
                 BluetoothGatt gattServer;
                 BluetoothGattCharacteristic characteristic;
                 try {
-                    gattServer = locateGatt(request.getRemoteId());
+                    cache = locateGattCache(request.getRemoteId());
+                    gattServer = cache.gattOne;
                     characteristic = locateCharacteristic(gattServer, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
                 } catch(Exception e) {
                     result.error("write_characteristic_error", e.getMessage(), null);
@@ -507,11 +522,13 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     break;
                 }
 
+                BluetoothDeviceCache cache;
                 BluetoothGatt gattServer;
                 BluetoothGattCharacteristic characteristic;
                 BluetoothGattDescriptor descriptor;
                 try {
-                    gattServer = locateGatt(request.getRemoteId());
+                    cache = locateGattCache(request.getRemoteId());
+                    gattServer = cache.gattOne;
                     characteristic = locateCharacteristic(gattServer, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
                     descriptor = locateDescriptor(characteristic, request.getDescriptorUuid());
                 } catch(Exception e) {
@@ -544,18 +561,21 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     break;
                 }
 
+                BluetoothDeviceCache cache;
                 BluetoothGatt gattServer;
                 BluetoothGattCharacteristic characteristic;
                 BluetoothGattDescriptor cccDescriptor;
                 try {
-                    gattServer = locateGatt(request.getRemoteId());
-                    characteristic = locateCharacteristic(gattServer, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
+                    cache = locateGattCache(request.getRemoteId());
+                    gattServer = cache.requestedNotificationCount < 15 ? cache.gattOne : cache.gattTwo;
+                    characteristic = locateCharacteristic(cache.gattOne, request.getServiceUuid(), request.getSecondaryServiceUuid(), request.getCharacteristicUuid());
                     cccDescriptor = characteristic.getDescriptor(CCCD_ID);
                     if(cccDescriptor == null) {
                         //Some devices - including the widely used Bluno do not actually set the CCCD_ID.
                         //thus setNotifications works perfectly (tested on Bluno) without cccDescriptor
                         log(LogLevel.INFO, "could not locate CCCD descriptor for characteristic: " + characteristic.getUuid().toString());
                     }
+
                 } catch(Exception e) {
                     result.error("set_notification_error", e.getMessage(), null);
                     return;
@@ -575,8 +595,10 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     }
                     if(canNotify) {
                         value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
+                        cache.requestedNotificationCount++;
                     }
                 } else {
+                    cache.requestedNotificationCount--;
                     value = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;
                 }
 
@@ -627,12 +649,13 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
                     break;
                 }
 
-                BluetoothGatt gatt;
+                BluetoothGatt firstGatt;
+                BluetoothGatt secondGatt;
                 try {
-                    gatt = locateGatt(request.getRemoteId());
+                    BluetoothDeviceCache cache = locateGattCache(request.getRemoteId());
                     int mtu = request.getMtu();
                     if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        if(gatt.requestMtu(mtu)) {
+                        if(cache.gattOne.requestMtu(mtu)) {
                             result.success(null);
                         } else {
                             result.error("requestMtu", "gatt.requestMtu returned false", null);
@@ -683,12 +706,12 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
         return false;
     }
 
-    private BluetoothGatt locateGatt(String remoteId) throws Exception {
+    private BluetoothDeviceCache locateGattCache(String remoteId) throws Exception {
         BluetoothDeviceCache cache = mDevices.get(remoteId);
-        if(cache == null || cache.gatt == null) {
+        if(cache == null || cache.gattOne == null) {
             throw new Exception("no instance of BluetoothGatt, have you connected first?");
         } else {
-            return cache.gatt;
+            return cache;
         }
     }
 
@@ -724,7 +747,7 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
         return descriptor;
     }
 
-    private final StreamHandler stateHandler = new StreamHandler() {
+    private final EventChannel.StreamHandler stateHandler = new EventChannel.StreamHandler() {
         private EventSink sink;
 
         private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
@@ -1043,11 +1066,14 @@ public class FlutterBluePlugin implements FlutterPlugin, MethodCallHandler, Requ
     // BluetoothDeviceCache contains any other cached information not stored in Android Bluetooth API
     // but still needed Dart side.
     static class BluetoothDeviceCache {
-        final BluetoothGatt gatt;
+        int requestedNotificationCount  = 0;
+        final BluetoothGatt gattOne;
+        final BluetoothGatt gattTwo;
         int mtu;
 
-        BluetoothDeviceCache(BluetoothGatt gatt) {
-            this.gatt = gatt;
+        BluetoothDeviceCache(BluetoothGatt gattOne, BluetoothGatt gattTwo) {
+            this.gattOne = gattOne;
+            this.gattTwo = gattTwo;
             mtu = 20;
         }
     }
